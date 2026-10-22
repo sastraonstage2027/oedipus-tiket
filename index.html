@@ -53,7 +53,7 @@ svg#map.loading{opacity:.4;pointer-events:none}
 .seat .x{display:none;stroke:var(--xmark);stroke-width:1.6;fill:none;pointer-events:none}
 .seat.free:hover rect,.seat.invite:hover rect{filter:brightness(1.18)}
 .seat:focus-visible rect{stroke:var(--ink);stroke-width:2.5}
-.seat.sold,.seat.blocked,.seat.held{cursor:not-allowed}
+.seat.sold,.seat.blocked,.seat.held,.seat.quota{cursor:not-allowed}
 .seat.sold rect{fill:var(--sold-bg);stroke:var(--hair)}
 .seat.sold text{display:none}
 .seat.sold .x{display:block}
@@ -61,6 +61,9 @@ svg#map.loading{opacity:.4;pointer-events:none}
 .seat.held text{fill:var(--held)}
 .seat.blocked rect{fill:var(--blk-bg);stroke:var(--blk-bd)}
 .seat.blocked text{fill:var(--blk-tx)}
+.seat.quota{cursor:not-allowed}
+.seat.quota rect{fill:var(--blk-bg);stroke:var(--faint);stroke-dasharray:2 2}
+.seat.quota text{fill:var(--blk-tx)}
 .seat.invite rect{fill:var(--inv-bg);stroke:var(--brass);stroke-width:1.6}
 .seat.invite text{fill:var(--inv-tx)}
 .seat.sel rect{fill:var(--sel);stroke:var(--selstroke);stroke-width:2.5}
@@ -75,6 +78,7 @@ svg#map.loading{opacity:.4;pointer-events:none}
 .chip.sold::after{content:"\00d7";position:absolute;inset:0;text-align:center;line-height:16px;color:var(--xmark)}
 .chip.held{background:var(--held-bg);border:1.5px dashed var(--held)}
 .chip.blocked{background:var(--blk-bg);border:1px solid var(--blk-bd)}
+.chip.quota{background:var(--blk-bg);border:1.5px dashed var(--faint)}
 .chip.invite{background:var(--inv-bg);border:1.5px solid var(--brass)}
 .panel{padding:18px;position:sticky;top:16px}
 .panel h2{font:600 24px "Cormorant Garamond",Georgia,serif;margin:0 0 12px}
@@ -262,8 +266,8 @@ const CONFIG = {
     reguler:  { label: 'Reguler', prices: { earlybird: 90000,  presale1: 100000, presale2: 110000, normal: 125000 } },
     ekonomi:  { label: 'Ekonomi', prices: { earlybird: 60000,  presale1: 65000,  presale2: 70000,  normal: 80000 } }
   },
-  blockedRows: ['C', 'J', 'K'],
-  blockedSeats: [],
+  blockedRows: ['G'],
+  blockedSeats: ['F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12'],
   pollSeconds: 45
 };
 
@@ -310,7 +314,7 @@ const byId = new Map(SEATS.map(s => [s.id, s]));
 const svg = $('#map');
 const dlg = $('#dlg');
 const els = new Map();
-let status = { sold: new Set(), held: new Set(), blocked: new Set([...CONFIG.blockedRows, ...CONFIG.blockedSeats]), noInvite: new Set() };
+let status = { sold: new Set(), held: new Set(), blocked: new Set([...CONFIG.blockedRows, ...CONFIG.blockedSeats]), noInvite: new Set(), quota: {} };
 let selected = new Set();
 let phase = CONFIG.phase;
 let zoom = 1;
@@ -322,6 +326,13 @@ const now = () => Date.now() + SERVER.skew;
 
 /* ---------- bahasa dan tema ---------- */
 const EN = {
+ "kuota fase ini habis": "phase quota sold out",
+ "Kuota fase ini habis": "Phase quota sold out",
+ "Kuota undangan {tier} tinggal {n} kursi.": "Invitation quota for {tier} is down to {n} seat(s).",
+ "Kuota tiket {tier} fase ini tinggal {n} kursi.": "Ticket quota for {tier} in this phase is down to {n} seat(s).",
+ "Berlaku untuk: {list}.": "Valid for: {list}.",
+ "Lab Teater": "Theatre Lab",
+ "Sastra Inggris": "English Literature",
  "PANGGUNG": "STAGE",
  "lebar 8,5 m · kedalaman 10 m": "width 8.5 m · depth 10 m",
  "Depan stage": "Front of stage",
@@ -449,6 +460,7 @@ const EN = {
  "Tanda emas": "Gold"
 };
 const SRV_EN = {
+ "Kelompok kode ini belum diatur. Hubungi panitia.": "This code's group has not been set up. Contact the committee.",
  "Masukkan kode undangan.": "Enter an invitation code.",
  "Kode tidak dikenal. Periksa lagi penulisannya.": "Code not recognised. Check the spelling.",
  "Kuota kursi untuk kode ini sudah habis.": "The seat quota for this code has been used up.",
@@ -494,9 +506,28 @@ function trSrv(msg) {
   if (x !== null) return 'Seat(s) ' + x + ' are not invitation seats.';
   x = between(m, 'Kode ini hanya cukup untuk ', ' kursi undangan.');
   if (x !== null) return 'This code covers only ' + x + ' invitation seats.';
+  x = between(m, 'Kuota tiket ', ' kursi.');
+  if (x !== null) { const p = x.split(' pada fase ini tinggal '); if (p.length === 2) return 'Ticket quota for ' + T(p[0]) + ' in this phase is down to ' + p[1] + ' seat(s).'; }
+  x = between(m, 'Kuota undangan ', ' kursi.');
+  if (x !== null) { const p = x.split(' tinggal '); if (p.length === 2) return 'Invitation quota for ' + T(p[0]) + ' is down to ' + p[1] + ' seat(s).'; }
+  x = between(m, 'Kode ini tidak berlaku untuk kursi ', '.');
+  if (x !== null) return 'This code is not valid for seat ' + x + '.';
   const k = m.indexOf(' khusus undangan. ');
   if (m.indexOf('Kursi ') === 0 && k > 6) return 'Seat(s) ' + m.slice(6, k) + ' are invitation only. ' + trSrv(m.slice(k + 18));
   return m;
+}
+const DAY_EN = { Senin: 'Monday', Selasa: 'Tuesday', Rabu: 'Wednesday', Kamis: 'Thursday', Jumat: 'Friday', Sabtu: 'Saturday', Minggu: 'Sunday' };
+const MON_EN = { Januari: 'January', Februari: 'February', Maret: 'March', April: 'April', Mei: 'May', Juni: 'June', Juli: 'July', Agustus: 'August', September: 'September', Oktober: 'October', November: 'November', Desember: 'December', Agu: 'Aug', Okt: 'Oct', Des: 'Dec' };
+function trEvent(text) {
+  const str = String(text == null ? '' : text);
+  if (lang !== 'en') return str;
+  let out = str.split('Lab Teater').join(T('Lab Teater')).split('Sastra Inggris').join(T('Sastra Inggris'));
+  out = out.split(' ').map(w => {
+    const tail = w.slice(-1) === ',' ? ',' : '';
+    const core = tail ? w.slice(0, -1) : w;
+    return (DAY_EN[core] || MON_EN[core] || core) + tail;
+  }).join(' ');
+  return out;
 }
 function applyTheme(t) {
   theme = t === 'dark' || t === 'light' ? t : 'system';
@@ -518,7 +549,7 @@ const demoApi = {
   async getState() { return demoStatus(); },
   async checkCode(c) {
     await wait(250);
-    return String(c).trim().toLowerCase().indexOf('demo') === 0 ? { ok: true, code: 'DEMO', label: 'Contoh', remaining: 4 } : { ok: false, message: 'Kode tidak dikenal. Periksa lagi penulisannya.' };
+    return String(c).trim().toLowerCase().indexOf('demo') === 0 ? { ok: true, code: 'DEMO', label: 'Contoh', remaining: 4, group: 'Dosen', tiers: { vip: { kind: 'RESERVASI', left: 20 }, premium: { kind: 'RESERVASI', left: 20 }, reguler: { kind: 'BEBAS', left: 36 }, ekonomi: { kind: 'BEBAS', left: 36 } } } : { ok: false, message: 'Kode tidak dikenal. Periksa lagi penulisannya.' };
   },
   async holdSeats(req) {
     await wait(500);
@@ -548,22 +579,34 @@ const api = DEMO ? demoApi : {
 /* ---------- logika kursi ---------- */
 const isBlocked = s => !CONFIG.tiers[s.tier].prices || status.blocked.has(s.id) || status.blocked.has(s.row);
 const isInvitable = s => isBlocked(s) && !(status.noInvite.has(s.id) || status.noInvite.has(s.row));
+const inviteTier = t => (invite && invite.tiers && invite.tiers[t]) || null;
+const inviteLeft = t => { const g = inviteTier(t); return g ? g.left : 0; };
+const quotaLeft = t => { const v = status.quota[t]; return v === null || v === undefined ? Infinity : v; };
+function isInviteSeat(s) {
+  const g = inviteTier(s.tier);
+  if (!g) return false;
+  return g.kind === 'BEBAS' ? !isBlocked(s) : isInvitable(s);
+}
 function statusOf(s) {
   if (status.sold.has(s.id)) return 'sold';
   if (status.held.has(s.id)) return 'held';
-  if (isBlocked(s)) return invite && isInvitable(s) ? 'invite' : 'blocked';
+  if (invite && isInviteSeat(s) && inviteLeft(s.tier) > 0) return 'invite';
+  if (isBlocked(s)) return 'blocked';
+  if (quotaLeft(s.tier) <= 0) return 'quota';
   return 'free';
 }
+const isInvSel = s => isBlocked(s) || (!!invite && isInviteSeat(s));
 const tierPrices = t => { const x = CONFIG.tiers[t]; return x && x.prices ? x.prices : EMPTY; };
 const tierPrice = t => tierPrices(t)[phase] || 0;
 const tierLabel = t => { const x = CONFIG.tiers[t]; return x && x.label ? T(x.label) : ''; };
 const taxOf = sub => Math.round(sub * (CONFIG.taxPct || 0) / 100);
 const taxNote = () => CONFIG.taxPct ? T('Harga belum termasuk pajak {pct}%. Pajak ditambahkan saat checkout.', { pct: CONFIG.taxPct }) : '';
-const priceOf = s => isBlocked(s) ? 0 : tierPrice(s.tier);
+const priceOf = s => isInvSel(s) ? 0 : tierPrice(s.tier);
 const selectable = st => st === 'free' || st === 'invite';
-const STATUS_TEXT = { get sold() { return T('sudah terjual'); }, get held() { return T('sedang ditahan'); }, get blocked() { return T('khusus undangan'); }, get invite() { return T('kursi undangan'); } };
+const STATUS_TEXT = { get sold() { return T('sudah terjual'); }, get held() { return T('sedang ditahan'); }, get blocked() { return T('khusus undangan'); }, get invite() { return T('kursi undangan'); }, get quota() { return T('kuota fase ini habis'); } };
 const selectedSeats = () => [...selected].map(id => byId.get(id)).sort((a, b) => a.row.localeCompare(b.row) || a.num - b.num);
-const inviteCount = () => [...selected].filter(id => isBlocked(byId.get(id))).length;
+const inviteCount = () => [...selected].filter(id => isInvSel(byId.get(id))).length;
+const selCountTier = (t, inv) => [...selected].filter(id => { const s = byId.get(id); return s.tier === t && isInvSel(s) === inv; }).length;
 
 /* ---------- gambar denah ---------- */
 function decor() {
@@ -605,11 +648,12 @@ const refreshSeats = () => SEATS.forEach(refreshSeat);
 
 /* ---------- panel, legenda, bar ---------- */
 function renderLegend() {
-  const free = t => SEATS.filter(s => s.tier === t && statusOf(s) === 'free').length;
+  const free = t => Math.min(SEATS.filter(s => s.tier === t && (statusOf(s) === 'free' || statusOf(s) === 'invite')).length, quotaLeft(t));
   const tiers = ['premium', 'reguler', 'ekonomi'].map(t =>
     '<li><i class="chip t-' + t + '"></i><span>' + tierLabel(t) + '</span><b>' + fmt(tierPrice(t)) + '</b><small>' + T('{n} tersisa', { n: free(t) }) + '</small></li>').join('');
   const note = CONFIG.taxPct ? '<li class="taxn">' + esc(taxNote()) + '</li>' : '';
   const states = [['sel', T('Dipilih')], ['sold', T('Terjual')], ['held', T('Sedang ditahan')], ['blocked', T('Khusus undangan')]];
+  if (['premium', 'reguler', 'ekonomi'].some(t => quotaLeft(t) <= 0)) states.push(['quota', T('Kuota fase ini habis')]);
   if (invite) states.push(['invite', T('Kursi undangan (bisa dipilih)')]);
   $('#legend').innerHTML = tiers + note + states.map(([c, t]) => `<li><i class="chip ${c}"></i><span>${t}</span></li>`).join('');
 }
@@ -663,6 +707,8 @@ function toggle(id) {
   else {
     if (selected.size >= CONFIG.maxSeats) { toast(T('Maksimal {n} kursi per pemesanan.', { n: CONFIG.maxSeats })); return; }
     if (st === 'invite' && inviteCount() >= invite.remaining) { toast(T('Kode ini hanya untuk {n} kursi undangan.', { n: invite.remaining })); return; }
+    if (st === 'invite' && selCountTier(s.tier, true) >= inviteLeft(s.tier)) { toast(T('Kuota undangan {tier} tinggal {n} kursi.', { tier: tierLabel(s.tier), n: inviteLeft(s.tier) })); return; }
+    if (st === 'free' && selCountTier(s.tier, false) >= quotaLeft(s.tier)) { toast(T('Kuota tiket {tier} fase ini tinggal {n} kursi.', { tier: tierLabel(s.tier), n: quotaLeft(s.tier) })); return; }
     selected.add(id);
   }
   refreshSeat(s); renderPanel();
@@ -693,8 +739,8 @@ function setCodeMsg(text, isErr) {
   const m = $('#codeMsg'); m.hidden = !text; m.textContent = text || ''; m.style.color = isErr ? 'var(--err-tx)' : 'var(--brass)';
 }
 function clearInvite() {
+  [...selected].forEach(id => { if (isInvSel(byId.get(id))) selected.delete(id); });
   invite = null;
-  [...selected].forEach(id => { if (isBlocked(byId.get(id))) selected.delete(id); });
   $('#codeInput').value = ''; $('#codeForm').hidden = true; $('#codeToggle').textContent = T('Punya kode undangan?');
   setCodeMsg('');
   renderAll();
@@ -706,8 +752,10 @@ $('#codeForm').addEventListener('submit', async e => {
   try {
     const r = await api.checkCode(v);
     if (r && r.ok) {
-      invite = { code: v, label: r.label, remaining: r.remaining };
-      setCodeMsg(T('Kode diterapkan{label}. Sisa {n} kursi undangan. Pilih kursi bertanda emas.', { label: r.label ? ' (' + r.label + ')' : '', n: r.remaining }));
+      [...selected].forEach(id => { const q = byId.get(id); const g = (r.tiers || {})[q.tier]; if (g && (g.kind === 'BEBAS' ? !isBlocked(q) : isInvitable(q))) selected.delete(id); });
+      invite = { code: v, label: r.label, remaining: r.remaining, group: r.group, tiers: r.tiers || {} };
+      const valid = Object.keys(invite.tiers).filter(t => tierLabel(t)).map(t => tierLabel(t) + ' (' + invite.tiers[t].left + ')').join(', ');
+      setCodeMsg(T('Kode diterapkan{label}. Sisa {n} kursi undangan. Pilih kursi bertanda emas.', { label: r.label ? ' (' + r.label + ')' : '', n: r.remaining }) + (valid ? ' ' + T('Berlaku untuk: {list}.', { list: valid }) : ''));
       $('#codeToggle').textContent = T('Hapus kode');
       $('#codeForm').hidden = true;
       renderAll();
@@ -773,7 +821,7 @@ async function submitOrder(e) {
   if (email && !validEmail(email)) return bad(T('Format email belum benar.'));
   btn.disabled = true; btn.textContent = T('Memproses...');
   try {
-    const res = await api.holdSeats({ name, wa, email, seats: [...selected], code: invite ? invite.code : '' });
+    const res = await api.holdSeats({ name, wa, email, seats: [...selected], inviteSeats: [...selected].filter(id => isInvSel(byId.get(id))), code: invite ? invite.code : '' });
     if (!res || !res.ok) {
       if (res && res.conflicts) {
         res.conflicts.forEach(id => selected.delete(id));
@@ -797,7 +845,7 @@ async function submitOrder(e) {
 function seatItems(o) { return (o.seats || []).map(s => typeof s === 'string' ? { id: s } : s); }
 function eventBlock(o) {
   const ev = o.event || CONFIG.event;
-  return `<p class="m" style="color:var(--muted);font-size:13.5px;margin:0">${esc(ev.series || '')} · ${esc(ev.title || '')}<br>${esc(ev.date || '')}<br>${esc(ev.venue || '')}</p>`;
+  return `<p class="m" style="color:var(--muted);font-size:13.5px;margin:0">${esc(ev.series || '')} · ${esc(ev.title || '')}<br>${esc(trEvent(ev.date || ''))}<br>${esc(ev.venue || '')}</p>`;
 }
 function waButton(o, label) {
   const wa = o.payment && o.payment.wa;
@@ -950,11 +998,12 @@ function applyEvent(ev) {
   lastEvent = ev;
   if (ev.series != null) $('#series').textContent = ev.series;
   if (ev.title != null) { $('#title').textContent = ev.title; document.title = T('Tiket {t}', { t: ev.title }); }
-  if (ev.date != null) $('#date').textContent = ev.date;
+  if (ev.date != null) $('#date').textContent = trEvent(ev.date);
   if (ev.venue != null) $('#venue').textContent = ev.venue;
-  if (ev.organizer != null) $('#org').textContent = ev.organizer;
+  if (ev.organizer != null) $('#org').textContent = trEvent(ev.organizer);
 }
 function applyState(r) {
+  status.quota = r.quota || {};
   status.sold = new Set(r.sold || []);
   status.held = new Set(r.held || []);
   if (!r.prices) return;
