@@ -156,6 +156,13 @@ dialog::backdrop{background:rgba(8,6,5,.72)}
 .ticket .k{letter-spacing:.2em;text-transform:uppercase;font-size:11.5px;color:var(--brass)}
 .ticket .t{font:600 30px "Cormorant Garamond",Georgia,serif;margin:2px 0}
 .ticket .m{color:var(--muted);font-size:13.5px}
+.tkgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin:0 0 4px}
+.tk{border:1px solid var(--line);border-radius:12px;padding:10px;text-align:center}
+.tk .qr{background:#fff;border-radius:8px;padding:4px;margin:0 0 8px}
+.tk .qr svg{display:block;width:100%;height:auto}
+.tk b{display:block;font-size:20px}
+.tk span{display:block;color:var(--muted);font-size:12.5px}
+.tkin{margin-top:6px;border:1px solid var(--brass);color:var(--brass);border-radius:999px;font-size:12px;padding:1px 8px;display:inline-block}
 .seatchips{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin:12px 0 0}
 .seatchips span{border:1px solid var(--line);border-radius:8px;padding:3px 10px;font-weight:600;font-size:14px}
 </style>
@@ -177,6 +184,7 @@ window.addEventListener('unhandledrejection', function (e) {
 });
 </script>
 <script src="config.js"></script>
+<script src="qr.js"></script>
 <header>
   <div class="art" role="img" aria-label="" aria-hidden="true"></div>
   <div class="wrap">
@@ -326,6 +334,8 @@ const now = () => Date.now() + SERVER.skew;
 
 /* ---------- bahasa dan tema ---------- */
 const EN = {
+ "Sudah masuk": "Checked in",
+ "Pesanan terkonfirmasi. Tunjukkan QR kursi di pintu masuk. Tiap kursi punya QR sendiri, jadi bisa dikirim ke teman satu per satu. Simpan tangkapan layar sebagai cadangan.": "Order confirmed. Show each seat's QR at the entrance. Every seat has its own QR, so you can send them to your friends one by one. Keep a screenshot as a backup.",
  "kuota fase ini habis": "phase quota sold out",
  "Kuota fase ini habis": "Phase quota sold out",
  "Kuota undangan {tier} tinggal {n} kursi.": "Invitation quota for {tier} is down to {n} seat(s).",
@@ -558,7 +568,8 @@ const demoApi = {
     const tax = taxOf(subtotal), total = subtotal + tax;
     return { ok: true, orderId: 'OED-DEMO1', token: 'demo', status: total ? 'DITAHAN' : 'LUNAS', subtotal, tax, taxPct: CONFIG.taxPct, total, seats: lines, name: req.name,
       holdUntil: Date.now() + CONFIG.holdMinutes * 60000, serverTime: Date.now(), link: location.href.split('#')[0] + '#demo',
-      payment: { info: 'Bank Contoh 1234567890\na.n. Panitia Contoh', qris: '', wa: '6281234567890' }, event: CONFIG.event };
+      payment: { info: 'Bank Contoh 1234567890\na.n. Panitia Contoh', qris: '', wa: '6281234567890' }, event: CONFIG.event,
+      codes: Object.fromEntries(lines.map(l => [l.id, 'OED-DEMO1.' + l.id + '.0000000000000000'])), checkedIn: {} };
   },
   async uploadProof() { await wait(700); return { ok: true, status: 'MENUNGGU_KONFIRMASI' }; },
   async getOrder() { return { ok: false, message: 'Pesanan tidak ditemukan.' }; }
@@ -940,6 +951,27 @@ function renderWait(o) {
   bindCopy();
 }
 
+function qrSvg(text) {
+  try {
+    if (!window.qrcode) return '';
+    const q = window.qrcode(0, 'M');
+    q.addData(String(text));
+    q.make();
+    return q.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+  } catch (e) { return ''; }
+}
+function seatCards(o, items) {
+  const codes = o.codes || {};
+  const done = o.checkedIn || {};
+  if (!items.some(s => codes[s.id] && qrSvg(codes[s.id]))) return '<div class="seatchips">' + items.map(s => `<span>${esc(s.id)}</span>`).join('') + '</div>';
+  return '<div class="tkgrid">' + items.map(s => {
+    const st = byId.get(s.id);
+    const meta = st ? tierLabel(st.tier) + ' · ' + T(st.section) : '';
+    const flag = done[s.id] ? `<div class="tkin">${T('Sudah masuk')}</div>` : '';
+    return `<div class="tk"><div class="qr">${qrSvg(codes[s.id] || '')}</div><b>${esc(s.id)}</b><span>${esc(meta)}</span>${flag}</div>`;
+  }).join('') + '</div>';
+}
+
 function renderTicket(o) {
   const items = seatItems(o);
   const ev = o.event || CONFIG.event;
@@ -951,8 +983,9 @@ function renderTicket(o) {
       ${eventBlock(o)}
       <div class="oid" style="margin-top:12px">${esc(o.orderId)}</div>
       <div class="m">${esc(o.name || '')}</div>
-      <div class="seatchips">${items.map(s => `<span>${esc(s.id)}</span>`).join('')}</div></div>
-    <p class="hint" style="margin:0">${T('Pesanan terkonfirmasi. Tunjukkan ID pesanan atau halaman ini di pintu masuk.')}</p>
+    </div>
+    ${seatCards(o, items)}
+    <p class="hint" style="margin:12px 0 0">${T('Pesanan terkonfirmasi. Tunjukkan QR kursi di pintu masuk. Tiap kursi punya QR sendiri, jadi bisa dikirim ke teman satu per satu. Simpan tangkapan layar sebagai cadangan.')}</p>
     ${linkBox(o)}
     <div class="row"><button class="btn" data-close>${T('Tutup')}</button></div>`);
   bindCopy();
